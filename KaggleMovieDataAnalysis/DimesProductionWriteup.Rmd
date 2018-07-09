@@ -1,0 +1,358 @@
+---
+title: "STAT167 Group #3 Final Project Writeup"
+author: 
+- name: "Salman Bana, Bryan Lei, Nathan Niculae, and Jirasuddhi Suvarnasuddhi"
+  email: "sbana002@ucr.edu, blei001@ucr.edu, nnicu001@ucr.edu, jsuva001@ucr.edu"
+date: "2018/5/11"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+#Summary of the Dataset#
+
+Movie dataset: https://www.kaggle.com/rounakbanik/the-movies-dataset
+
+This movie dataset contains metadata from 45,000 movies, and 26 million ratings from 270,000 users for these 45,000 movies. 
+
+In the movie dataset, we will most likely be focusing on data from two csv files: movie_metadata.csv, and ratings.csv.
+
+The variables of note in the first csv file, movie_metadata.csv, are id, budget, revenue, genres, popularity, release date, runtime, vote average, and vote count
+
+The variables of note in the second csv file, ratings.csv, are userId, movieId, and rating.
+
+## Bringing in the Data
+
+```{r}
+#To grader bring in DATA submitted in DROPBOX
+
+movies_metadata <- read.csv("C:/Users/salma/Desktop/R Programming/STAT167/Final Project/movies_metadata.csv")
+ratings_small <- read.csv("C:/Users/salma/Desktop/R Programming/STAT167/Final Project/ratings_small.csv")
+
+#Exported to Excel to change all single quotes to double qoutes for JSON and reimported
+
+movies_metadata_rev <- read.csv("C:/Users/salma/Desktop/R Programming/STAT167/Final Project/movies_metadata_rev.csv")
+```
+
+## Install and Load packages
+```{r}
+#install.packages("tidyverse")
+#install.packages("ggplot2")
+#install.packages("reshape2")
+#install.packages("jsonlite")
+#install.packages("coop")
+#install.packages("philentropy")
+#install.packages("plotly")
+
+library("tidyverse")
+library("ggplot2")
+library("reshape2")
+library("jsonlite")
+library("coop")
+library("philentropy")
+library("plotly")
+```
+
+# Questions/problems we would like to solve#  
+
+#1. What genres of movies yield the largest profit?#
+
+```{r}
+#This caused problems when converting to JSON, so we kept this as false
+options(stringsAsFactors = FALSE)
+
+movies_metadata_rev = movies_metadata_rev %>% filter(budget != 0 , revenue != 0) %>% mutate(id = as.integer(id)) #%>% glimpse()
+
+selected_columns <- data.frame(id = as.numeric(movies_metadata_rev$id), genres = as.character(movies_metadata_rev$genres))
+
+genre_conversion <- data.frame(gen = fromJSON(selected_columns[1, 2])$name)
+
+intermediate1 <- data.frame(movieID = rep(selected_columns[1, 1], dim(genre_conversion)[1]))
+
+genre_conversion <- cbind(intermediate1, genre_conversion)
+
+for (i in 2:dim(selected_columns)[1]) {
+  intermediate2 <- data.frame(gen = fromJSON(selected_columns[i, 2])$name)
+  intermediate1 <- data.frame(movieID = rep(selected_columns[i, 1], dim(intermediate2)[1]))
+  intermediate1 <- cbind(intermediate1, intermediate2)
+  genre_conversion <- rbind(genre_conversion, intermediate1)
+}
+
+genre_id = genre_conversion %>% mutate(id = as.integer(movieID)) %>% select(-movieID) #%>% glimpse()
+
+fr_box = left_join(movies_metadata_rev,genre_id,by = 'id') %>% mutate(profit = as.integer(revenue) - as.integer(budget)) %>% filter(profit != is.na(profit)) %>% arrange(desc(profit)) #%>% glimpse()
+
+p_box = ggplot(data = fr_box, aes(x = gen, y = profit, color =  gen)) +
+  geom_boxplot() +
+  ylim(c(-100,2e+08)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  theme(legend.position="none")+
+  xlab("Genre") +
+  ylab("Profit")
+
+p_box
+```
+
+
+####By looking at the boxplots we can see that Animated movies have the highest median profit. What we suggest is that movie makers make movies that are animated in hopes of increasing their possible profit. Some areas that are clearly lacking are documentaries and foriegn. This is porbably due to underrepresentation due to cleaning of the data(removing N/A's) and just a low quality film or low interest film.####
+
+
+
+#2. What genre of movies exists the most? The least?#
+
+```{r}
+#glimpse(testing)
+
+p_histo = ggplot(data = genre_conversion, aes(x = gen, color = gen, fill = gen)) +
+  geom_histogram(mapping = aes(fill=gen),stat = "count") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  theme(legend.position="none")+
+  xlab("Genre")
+
+p_histo
+```
+
+####We can see that movies seem to have higher counts in the genres of Drama, Comedy, and Thriller. While yet again Documentaries and Forieg movies are low stat movies with the addition of the TV Movie genre####
+
+
+#3. How strongly does average rating and popularity correlate with the profit a movie made? Does it follow a linear, polynomial, or exponential curve?#
+
+```{r}
+#glimpse(movies_metadata)
+
+good = movies_metadata %>% filter(budget != 0 , revenue != 0) #%>% glimpse()
+
+packageVersion('plotly')
+
+#glimpse(good)
+
+ma = max(good$vote_count)
+
+lin_data = good %>% mutate(profit = revenue - as.double(budget), vote_count = (vote_count / ma) * 10 ) %>% select(vote_average,vote_count, profit) #%>% glimpse()
+
+lm_one = lm(profit ~ vote_average + vote_count, data = lin_data)
+
+lm_two = lm(profit ~ poly(vote_average,3) + vote_count, data = lin_data)
+
+lin_data.2 = good %>% mutate(profit = revenue - as.double(budget)) %>% select(vote_average,vote_count, profit) %>% mutate(log.vote_count = log(vote_count)) %>% filter(vote_count != is.na(vote_count), vote_average != is.na(vote_average)) #%>% glimpse()
+
+lm_three = lm(formula = log(vote_count) ~ vote_average, data = lin_data.2)
+
+summary(lm_one)
+
+summary(lm_two) #not much improvement
+
+summary(lm_three) #much worse
+
+#Graph Resolution (more important for more complex shapes)
+graph_reso <- 0.05
+
+#Setup Axis
+axis_x <- seq(min(lin_data$vote_average), max(lin_data$vote_average), by = graph_reso)
+axis_y <- seq(min(lin_data$vote_count), max(lin_data$vote_count), by = graph_reso)
+
+#Sample points
+lm_surface <- expand.grid(vote_average = axis_x, vote_count = axis_y,KEEP.OUT.ATTRS = F)
+lm_surface$Profit <- predict.lm(lm_one, newdata = lm_surface)
+lm_surface <- acast(lm_surface, vote_average ~ vote_count, value.var = "Profit") #y ~ x
+
+P_LIN = plot_ly(data = lin_data, x = ~vote_average, y = ~vote_count, z = ~profit, marker = list(size = 2)) %>%
+  add_markers %>%
+  layout(scene = list(xaxis = list(title = 'Average Rating'), yaxis = list(title = 'Popularity'), zaxis = list(title = 'Profit'))) %>%
+  add_surface(z = lm_surface, x = axis_x, y = axis_y, opacity = .5, showscale = FALSE)
+
+#Graph is there, trying moving cursor over it to make it appear. Can be dragged and viewed from different angles
+P_LIN
+```
+      
+####In this we found that the best regression model was the linear regression with formula = profit ~ vote_average + vote_count. The R^2 = 0.56 which is not very good, but given the data isnt very clean and this is a real world example, it is satsifactory####
+
+
+#4. Create a recommender system that recommends the top 5 movies based on the ratings of the movies that you have watched#
+
+First step is Data Manipulation. The requirements for the optimization problem is a normalized mean rating matrix, Ynorm, and a matrix R which contains only 1's and 0's: 1 if movie i was rated by user j, and 0 if not. We create these variables.
+```{r}
+
+#Convert from long into wide format
+Y <- dcast(ratings_small, formula = movieId ~ userId, value.var = "rating", add.missing = TRUE, fill = NA)
+
+#Store the movieIds for later and turn Y into a matrix for each of use, and in order to save memory
+store <- Y$movieId
+Y <- Y %>% select(-movieId)
+Y <- as.matrix(Y)
+
+#Compute the means for each user, normalize the rating matrix, and create matrix R. Convert the NAs into 0s
+Ymean <- colMeans(Y, na.rm = TRUE)
+Ynorm <- Y - Ymean
+Ynorm[is.na(Ynorm)] <- 0
+R <- Y
+R[!is.na(R)] <- 1
+R[is.na(R)] <- 0
+
+#Useful numbers for the optimization function to refer to. Number of features and lambda were randomly decided
+num_users <- dim(Y)[2]
+num_movies <- dim(Y)[1]
+num_features <- 10;
+lambda <- 1
+```
+
+
+$$\min_{\theta^{(1)},\dots \theta^{(n_u)}}\frac{1}{2}\sum_{j=1}^{n_u}\sum_{i:r(i,j)=1}((\theta^{(j)})^{T}x^{(i)}-y^{(i,j)})^{2} + \frac{\lambda}{2}\sum_{j=1}^{n_u}\sum_{k=1}^{n}((\theta_{k}^{(j)})^{2}$$
+
+Gradient descent update:
+
+$$x_k^{(i)} := x_k^{(i)} - \alpha(\sum_{j:r(i,j)=1}((\theta^{(j)})^Tx^{(i)} - y ^{(i,j)})\theta_k^{(i)} + \lambda x_k^{(j)})$$
+
+$$\theta_k^{(j)} := \theta_k^{(j)} - \alpha(\sum_{i:r(i,j)=1}((\theta^{(j)})^Tx^{(i)} - y ^{(i,j)})x_k^{(i)} + \lambda\theta_k^{(j)})$$ 
+
+The cost function and gradient descent function are shown above. Similar to a singular value decomposition, our predictions is composed of X * Theta'. X is a number of movies by number of features matrix, which takes into account the similarities (or dissimilarities) between features in movies, and Theta is a number of users by number of features matrix, which takes into similarities between users ratings in terms of features.
+
+```{r}
+#Set the seed and combine X and Theta into one matrix, so that the optimization function can optimize both X and Theta
+set.seed(167)
+X <- matrix(rnorm(num_movies * num_features), num_movies, num_features)
+Theta <- matrix(rnorm(num_users * num_features), num_users, num_features)
+
+initial_parameters <- c(c(X), c(Theta))
+```
+
+
+The optimization function takes in the initial parameters, a cost function, and a gradient function.
+The optimization returns the optimized parameters and whether the optimization function converged at a maximum. Since the optimization function only returns one set of parameters, and we want to optimize both X and Theta, we combine them into one matrix and separate them in both the cost and gradient functions.
+
+
+```{r}
+#Cost function
+
+fr <- function(params) {
+  X <- matrix(params[1:num_movies*num_features], num_movies, num_features)
+  Theta <- matrix(params[(num_movies*num_features + 1):length(params)], num_users, num_features)
+  inter_step <- (((X %*% t(Theta)) - Ynorm) * R)
+  fr <- (sum(colSums(inter_step ^ 2)) + lambda * (sum(colSums(Theta ^ 2)) + sum(colSums(X ^ 2))))  / 2
+}
+
+#Gradient descent function
+grr <- function(params) {
+  X <- matrix(params[1:num_movies*num_features], num_movies, num_features)
+  Theta <- matrix(params[(num_movies*num_features + 1):length(params)], num_users, num_features)
+  inter_step <- (((X %*% t(Theta)) - Ynorm) * R)
+  X_grad <- (inter_step %*% Theta) + (lambda * X)
+  Theta_grad <- ((t(inter_step)) %*% X) + (lambda * Theta)
+  grr <- c(c(X_grad), c(Theta_grad))
+}
+```
+
+I tried other optimization methods, such as the SANN method, and L-BFGS-B method, and even other conjugate gradient methods, but SANN took all night to do and optimized the last out of the three. L-BFGS-B took longer than the conjugate gradient methods and only attained a minimal improvement over the other methods. The Fletcher Reeves method was the fastest, and the difference in performance between the three conjugate gradient methods was not significant. 
+
+```{r}
+#Perform the optimization, increasing the number of iterations to 1000 and using the Fletcher Reeves update method for conjugate gradient method. 
+typeCG <- list(maxit = 500, type = 1)
+FletcherReevesOptim <- optim(par = initial_parameters, fn = fr, gr = grr, method = "CG", control = typeCG)
+
+new_params <- FletcherReevesOptim$par
+X <- matrix(new_params[1:num_movies*num_features], num_movies, num_features)
+Theta <- matrix(new_params[(num_movies*num_features + 1):length(new_params)], num_users, num_features)
+```
+
+After optimization, the next task is to output the top 5 movies for the user. We came into problems when we learned that not all of the movieIds from the small ratings dataset were part of the movie metadata, so joining them together introduced NAs in the titles and many other problems arose from that. So in my top 5 prediction function, I did some damage control by just removing the NAs whenever I saw them pop up.
+
+```{r}
+
+predictions <- (X %*% t(Theta)) + Ymean
+  
+predictTop5 <- function(predictions, metadata, Y, user_num) {
+  metadata$id <- as.integer(metadata$id)
+  
+  user <- predictions[ , user_num]
+  user <- cbind(store, user)
+  Movies_watched <- Y[ , user_num]
+  Not_NAs <- !is.na(Movies_watched)
+  Movies_watched <- as.data.frame(cbind(store[Not_NAs], Movies_watched[Not_NAs]))
+  colnames(Movies_watched) <- c("id", "rating")
+  
+  User_watched <- metadata %>%
+    select(id, original_title) %>%
+    filter(id %in% Movies_watched[ , 1])
+  
+  Movies_watched <- left_join(Movies_watched, User_watched, by = "id") %>%
+    filter(!is.na(original_title)) %>% 
+    arrange(desc(rating)) %>%
+    top_n(13, wt = rating)
+  
+  print(Movies_watched)
+  
+  user <- as.data.frame(user)
+  colnames(user) <- c("id", "rating")
+  
+  predictTop5 <- user %>%
+    arrange(desc(rating)) %>%
+    left_join(metadata, by = "id") %>% select(original_title, rating) %>%
+    filter(!is.na(original_title)) %>% 
+    top_n(5, wt = rating)
+}
+
+```
+
+
+Output shown for users 14 and 109
+
+```{r}
+user14 <- predictTop5(predictions, movies_metadata, Y, 14)
+
+user14
+```
+
+```{r}
+user109 <- predictTop5(predictions, movies_metadata, Y, 109)
+
+user109
+```
+
+  
+```
+
+#Conclusion and Discussion#
+
+One of the issues we encountered was dealing with the text variables and making them able to read. The problem was that the single quotes were not recognizeed by JSON so we converted all the single quotes to double qoutes in excel and re-imported the datafile.
+
+Another issue that we encountered in creating the recommendation system was that the standard deviation for a set of movies was 0 after normalizing it, and because of that, the Pearson correlation and centered cosine similarity produced NaN values in the output dataset. We researched Jaccard similarity and determined that it was a mediocre and insufficient method of quantifying similarity between two users. We thought about creating clusters of users and/or movies and filling in movies based on those clusters and recommending movies based on what cluster a new user fell into, but in a hurry, we decided that Collaborative filtering was the easiest method to implement.
+
+We did not use the large dataset, because even after filtering some movies and users, it was still too large to handle. We used the small ratings dataset instead for the recommender systems.
+
+
+## Contributions:
+
+  Salman Bana:
+  
+  JSON (Conversion from JSON to character vector for Genre), Majority of Recommendation System such as but not limited to opmtimization, cost and gradient functions, predicting top movies, and playing chess.
+  
+  Bryan Lei:
+  
+  R & D for data transformation of ratings dataframe (ie issues in our data that errored our code), addressed sloppiness of datasets, and helped debug recommendation system.
+  
+  Nathan Niculae:
+  
+  Majority of Coding for 1-3 Polished presentation, Majority of RMD formating (All but Q4), and moral support for Salman and Bryan.
+  
+  Jirasuddhi Suvarnasuddhi:    
+  
+  All of the Presentation, RMD formating and proofreading, coding/debugging for 1-3, Idea forming for questions 1-3, and moral support for Salman and Bryan. (Also playing Chess with Salman)
+
+  
+## References:
+
+We utilized the Coursera slides when creating the recommender system. I also referenced the second edition of the Mining of Massive Datasets book, slides, and videos when previously trying to create the recommender system using various similarity functions. We also used plotly's website for creating the 3D plot
+
+https://www.coursera.org/learn/machine-learning/supplement/gXdW5/lecture-slides
+
+http://www.mmds.org/
+
+https://plot.ly/r/
+
+
+
+
+
+
